@@ -101,12 +101,13 @@ aws s3 website s3://honey-pot-frontend --index-document index.html --error-docum
 - ML models deployed to cloud storage
 - React application built and uploaded to cloud
 - Static website hosting configured
+- AWS Lambda functions deployed (`honey-pot-lambda`, `incident-reporter-function`)
 
 ### ⚠️ Current Limitations
 - Public access restricted by AWS security settings (BlockPublicAccess)
-- IAM permissions limited for advanced services (Lambda, Amplify)
 - Static website not publicly accessible via browser
 - S3 bucket policies cannot be set to public
+- Frontend not yet wired to call the deployed Lambda (predictions are computed client-side)
 
 ### 🔐 Security Considerations
 - All data stored securely in AWS S3

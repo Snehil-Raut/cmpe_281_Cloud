@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import PropTypes from 'prop-types';
 import styles from '../styles';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5001';
+const BACKEND_URL = '/api'
 const LAMBDA_ENDPOINT = 'https://yof26i9009.execute-api.us-east-1.amazonaws.com/dev/predict';
 
 const defaultModelOptions = [
@@ -205,7 +205,7 @@ const Dashboard = ({ onNavigate }) => {
                 <strong>{formatPercent(model.accuracy)}</strong>
               </div>
               <div style={styles.metricRow}>
-                <span>Precision</span>
+                <span>PrecisionPrediction Results</span>
                 <strong>{formatScore(model.precision)}</strong>
               </div>
               <div style={styles.metricRow}>

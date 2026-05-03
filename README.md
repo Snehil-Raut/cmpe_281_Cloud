@@ -1,4 +1,4 @@
-# Network Attack Detection System (Honey Pot)
+# Intrusion Detection System
 
 A comprehensive cloud-based machine learning system for detecting network intrusions and cyberattacks in real-time. Built with AWS services and trained on the NSL-KDD dataset.
 

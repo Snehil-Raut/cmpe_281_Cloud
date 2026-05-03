@@ -29,11 +29,11 @@ PREDICTIONS_TABLE = 'attack-detection-predictions'
 models = {}
 
 
-
+REGION = "us-east-1"
 # AWS clients/resources
 s3 = boto3.client('s3')
-sqs = boto3.client('sqs')
-dynamodb = boto3.resource('dynamodb')
+sqs = boto3.client("sqs", region_name=REGION)
+dynamodb = boto3.resource('dynamodb', region_name=REGION)
 
 # Expected column schema for raw KDD training data (with label + difficulty_level)
 RAW_COLUMNS_WITH_LABEL = [

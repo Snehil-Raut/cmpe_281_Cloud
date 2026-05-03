@@ -1,7 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import styles from '../styles';
 
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5001';
+const LAMBDA_ENDPOINT = 'https://yof26i9009.execute-api.us-east-1.amazonaws.com/dev/predict';
+
 const Predict = ({ onNavigate }) => {
+  const [models, setModels] = useState(['random_forest', 'decision_tree', 'logistic_regression']);
   const [formData, setFormData] = useState({
     duration: "",
     protocol_type: "tcp",
@@ -16,10 +20,30 @@ const Predict = ({ onNavigate }) => {
     rerror_rate: "",
     dst_host_count: "",
     dst_host_srv_count: "",
-    model: "Random Forest"
+    model: "random_forest"
   });
 
   const [result, setResult] = useState(null);
+  const [storing, setStoring] = useState(false);
+  const [storeMessage, setStoreMessage] = useState(null);
+
+  useEffect(() => {
+    const loadModels = async () => {
+      try {
+        const response = await fetch(`${BACKEND_URL}/models`);
+        if (response.ok) {
+          const data = await response.json();
+          if (Array.isArray(data.models) && data.models.length > 0) {
+            setModels(data.models);
+            setFormData((prev) => ({ ...prev, model: data.models[0] }));
+          }
+        }
+      } catch (error) {
+        console.warn('Unable to load model list from backend, using defaults.');
+      }
+    };
+    loadModels();
+  }, []);
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -99,8 +123,53 @@ const Predict = ({ onNavigate }) => {
       prediction: riskLevel === "High" ? "Attack" : "Normal",
       risk: riskLevel,
       score: score,
-      model: formData.model
+      model: formData.model,
+      confirmed: false
     });
+    
+    setStoreMessage(null);
+  };
+
+  // Store prediction to Lambda with confirmed actual label
+  const storePredictionToLambda = async (actualLabel) => {
+    if (!result) return;
+    
+    setStoring(true);
+    try {
+      const response = await fetch(LAMBDA_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operation: 'store_prediction',
+          prediction_id: `pred_${Date.now()}`,
+          model_name: result.model.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+          actual_label: actualLabel,
+          predicted_label: result.prediction,
+          confidence: (result.score / 100).toFixed(4)
+        })
+      });
+      
+      const resData = await response.json();
+      
+      if (response.ok) {
+        setStoreMessage({
+          type: 'success',
+          text: `✓ Prediction stored! Actual: ${actualLabel}, Predicted: ${result.prediction}`
+        });
+        setResult({ ...result, confirmed: true, actualLabel });
+      } else {
+        setStoreMessage({
+          type: 'error',
+          text: `Failed to store: ${resData.error || 'Unknown error'}`
+        });
+      }
+    } catch (error) {
+      setStoreMessage({
+        type: 'error',
+        text: `Error storing prediction: ${error.message}`
+      });
+    }
+    setStoring(false);
   };
 
   const getRiskBadgeStyle = (risk) => {
@@ -115,16 +184,6 @@ const Predict = ({ onNavigate }) => {
 
   return (
     <div style={styles.page}>
-      <div style={styles.navbar}>
-        <div style={styles.logo}>Threat Detection Dashboard</div>
-        <div style={styles.navButtons}>
-          <button style={styles.navButton} onClick={() => onNavigate("dashboard")}>Home</button>
-          <button style={styles.navButton} onClick={() => onNavigate("predict")}>Predict</button>
-          <button style={styles.navButton} onClick={() => onNavigate("upload")}>Batch Analysis</button>
-          <button style={styles.logoutButton} onClick={() => onNavigate("login")}>Logout</button>
-        </div>
-      </div>
-
       <h1 style={styles.title}>Predict Single Session</h1>
       <p style={styles.subtitle}>
         Enter session-level network features and simulate attack classification.
@@ -133,9 +192,11 @@ const Predict = ({ onNavigate }) => {
       <div style={styles.formBox}>
         <label style={styles.label}>Model</label>
         <select name="model" value={formData.model} onChange={handleChange} style={styles.input}>
-          <option>Random Forest</option>
-          <option>Decision Tree</option>
-          <option>Logistic Regression</option>
+          {models.map((modelName) => (
+            <option key={modelName} value={modelName}>
+              {modelName.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
+            </option>
+          ))}
         </select>
 
         <label style={styles.label}>Duration</label>
@@ -200,7 +261,7 @@ const Predict = ({ onNavigate }) => {
         </div>
       </div>
 
-      {result && (
+  {result && (
         <div style={styles.resultBox}>
           <div style={styles.resultHeader}>
             <h2 style={{ margin: 0 }}>Prediction Result</h2>
@@ -223,6 +284,95 @@ const Predict = ({ onNavigate }) => {
             <span>Model</span>
             <strong>{result.model}</strong>
           </div>
+
+          {/* Confirmation Section */}
+          {!result.confirmed && (
+            <div style={{
+              marginTop: '20px',
+              paddingTop: '20px',
+              borderTop: '1px solid #334155'
+            }}>
+              <p style={{ color: '#94a3b8', marginBottom: '15px' }}>
+                📊 Confirm actual label to store prediction and update metrics:
+              </p>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: '10px'
+              }}>
+                <button
+                  onClick={() => storePredictionToLambda('Normal')}
+                  disabled={storing}
+                  style={{
+                    padding: '10px 15px',
+                    backgroundColor: '#34d399',
+                    color: '#0f172a',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontWeight: 'bold',
+                    cursor: storing ? 'not-allowed' : 'pointer',
+                    opacity: storing ? 0.6 : 1
+                  }}
+                >
+                  {storing ? 'Storing...' : '✓ Actual: Normal'}
+                </button>
+                <button
+                  onClick={() => storePredictionToLambda('Attack')}
+                  disabled={storing}
+                  style={{
+                    padding: '10px 15px',
+                    backgroundColor: '#f87171',
+                    color: '#0f172a',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontWeight: 'bold',
+                    cursor: storing ? 'not-allowed' : 'pointer',
+                    opacity: storing ? 0.6 : 1
+                  }}
+                >
+                  {storing ? 'Storing...' : '✗ Actual: Attack'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Stored Confirmation */}
+          {result.confirmed && (
+            <div style={{
+              marginTop: '20px',
+              paddingTop: '20px',
+              borderTop: '1px solid #334155',
+              backgroundColor: 'rgba(52, 211, 153, 0.1)',
+              padding: '15px',
+              borderRadius: '6px',
+              border: '1px solid #10b981'
+            }}>
+              <div style={{ color: '#10b981', fontWeight: 'bold' }}>
+                ✓ Prediction stored successfully!
+              </div>
+              <div style={{ color: '#94a3b8', fontSize: '12px', marginTop: '5px' }}>
+                Actual: <strong>{result.actualLabel}</strong> | 
+                Predicted: <strong>{result.prediction}</strong> | 
+                Correct: <strong>{result.actualLabel === result.prediction ? 'Yes' : 'No'}</strong>
+              </div>
+            </div>
+          )}
+
+          {/* Store Message */}
+          {storeMessage && (
+            <div style={{
+              marginTop: '15px',
+              padding: '12px',
+              borderRadius: '6px',
+              backgroundColor: storeMessage.type === 'success' 
+                ? 'rgba(52, 211, 153, 0.2)' 
+                : 'rgba(248, 113, 113, 0.2)',
+              color: storeMessage.type === 'success' ? '#10b981' : '#f87171',
+              border: `1px solid ${storeMessage.type === 'success' ? '#10b981' : '#f87171'}`
+            }}>
+              {storeMessage.text}
+            </div>
+          )}
         </div>
       )}
     </div>

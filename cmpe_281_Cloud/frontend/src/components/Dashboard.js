@@ -28,15 +28,6 @@ const Dashboard = ({ onNavigate }) => {
 
   return (
     <div style={styles.page}>
-      <div style={styles.navbar}>
-        <div style={styles.logo}>Threat Detection Dashboard</div>
-        <div style={styles.navButtons}>
-          <button style={styles.navButton} onClick={() => onNavigate("upload")}>Batch Analysis</button>
-          <button style={styles.navButton} onClick={() => onNavigate("metrics")}>Metrics</button>
-          <button style={styles.logoutButton} onClick={() => onNavigate("login")}>Logout</button>
-        </div>
-      </div>
-
       <div style={styles.heroSection}>
         <p style={styles.tag}>AWS + Machine Learning + Intrusion Analysis</p>
         <h1 style={styles.title}>Cloud-Based Intrusion Detection System</h1>

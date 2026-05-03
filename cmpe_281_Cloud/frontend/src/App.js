@@ -1,65 +1,44 @@
-import { useState } from "react";
-import { Amplify } from 'aws-amplify';
-import { Login, Dashboard, Predict, Upload, Metrics } from './components';
-import { useAuth } from './hooks/useAuth';
-
-// Configure AWS Amplify with placeholder values
-// These should be replaced with your actual AWS Cognito configuration
-Amplify.configure({
-  Auth: {
-    Cognito: {
-      userPoolId: 'us-east-1_XXXXXXXXX', // Replace with your User Pool ID
-      userPoolClientId: 'XXXXXXXXXXXXXXXXXXXXXXXXXX', // Replace with your App Client ID
-      region: 'us-east-1', // Replace with your region
-    }
-  }
-});
+import { useState, useEffect } from "react";
+import Login from './components/Login';
+import Dashboard from './components/Dashboard';
+import Upload from './components/Upload';
+import Metrics from './components/Metrics';
+import Predict from './components/Predict';
+import Navbar from './components/Navbar';
+import styles from './styles';
 
 function App() {
   const [page, setPage] = useState("login");
-  const { isAuthenticated, login, logout } = useAuth();
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
-  const handleLogin = async (loginData, setLoginError) => {
-    const success = await login(loginData, setLoginError);
-    if (success) {
-      setPage("dashboard");
-    }
+  const handleLogin = () => {
+    setIsAuthenticated(true);
+    setPage("dashboard");
   };
 
-  const handleLogout = async () => {
-    await logout();
+  const handleLogout = () => {
+    setIsAuthenticated(false);
     setPage("login");
   };
 
-  const handleNavigate = (newPage) => {
-    if (newPage === "login") {
-      handleLogout();
-    } else {
-      setPage(newPage);
-    }
+  const navigate = (newPage) => {
+    setPage(newPage);
   };
 
-  if (page === "login" || !isAuthenticated) {
-    return <Login onLogin={handleLogin} onNavigate={handleNavigate} />;
+  if (!isAuthenticated) {
+    return <Login onLogin={handleLogin} />;
   }
 
-  if (page === "dashboard") {
-    return <Dashboard onNavigate={handleNavigate} />;
-  }
-
-  if (page === "predict") {
-    return <Predict onNavigate={handleNavigate} />;
-  }
-
-  if (page === "upload") {
-    return <Upload onNavigate={handleNavigate} />;
-  }
-
-  if (page === "metrics") {
-    return <Metrics onNavigate={handleNavigate} />;
-  }
-
-  return <Dashboard onNavigate={handleNavigate} />;
+  return (
+    <div style={styles.appContainer}>
+      <Navbar onNavigate={navigate} onLogout={handleLogout} />
+      {page === "dashboard" && <Dashboard onNavigate={navigate} />}
+      {page === "upload" && <Upload onNavigate={navigate} />}
+      {page === "metrics" && <Metrics onNavigate={navigate} />}
+      {page === "predict" && <Predict onNavigate={navigate} />}
+    </div>
+  );
 }
 
 export default App;
+

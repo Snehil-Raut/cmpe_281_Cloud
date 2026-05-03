@@ -83,6 +83,12 @@ const styles = {
     fontSize: "14px",
     textDecoration: "underline"
   },
+  appContainer: {
+    minHeight: "100vh",
+    background: "linear-gradient(135deg, #0f172a, #111827, #1e293b)",
+    color: "#f8fafc",
+    fontFamily: "Arial, sans-serif"
+  },
   page: {
     minHeight: "100vh",
     background: "linear-gradient(135deg, #0f172a, #111827, #1e293b)",
@@ -94,7 +100,12 @@ const styles = {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
+    backgroundColor: "#0f172a",
+    border: "1px solid rgba(148, 163, 184, 0.15)",
+    borderRadius: "18px",
+    padding: "18px 24px",
     marginBottom: "30px",
+    boxShadow: "0 10px 35px rgba(15, 23, 42, 0.28)",
     flexWrap: "wrap",
     gap: "15px"
   },
@@ -409,6 +420,22 @@ const styles = {
     fontWeight: "bold",
     fontSize: "13px"
   },
+  processingBadge: {
+    backgroundColor: "#92400e",
+    color: "#fef3c7",
+    padding: "6px 12px",
+    borderRadius: "999px",
+    fontWeight: "bold",
+    fontSize: "13px"
+  },
+  completeBadge: {
+    backgroundColor: "#064e3b",
+    color: "#a7f3d0",
+    padding: "6px 12px",
+    borderRadius: "999px",
+    fontWeight: "bold",
+    fontSize: "13px"
+  },
   lowBadge: {
     backgroundColor: "#14532d",
     color: "#bbf7d0",
@@ -428,6 +455,12 @@ const styles = {
   highBadge: {
     backgroundColor: "#7f1d1d",
     color: "#fecaca",
+    padding: "6px 12px",
+    borderRadius: "999px",
+    fontWeight: "bold",
+    fontSize: "13px"
+  },
+  badge: {
     padding: "6px 12px",
     borderRadius: "999px",
     fontWeight: "bold",

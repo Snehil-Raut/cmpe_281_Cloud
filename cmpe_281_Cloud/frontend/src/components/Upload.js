@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import Papa from 'papaparse';
 import styles from '../styles';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5001';
+const BACKEND_URL = '/api'
 
 const Upload = ({ onNavigate, onToast }) => {
   const [uploadedFileName, setUploadedFileName] = useState("");
@@ -96,7 +96,7 @@ const Upload = ({ onNavigate, onToast }) => {
       const uploadId = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
       
       // Call async batch predict endpoint
-      const response = await fetch(`${BACKEND_URL}/batch_predict_async`, {
+      const response = await fetch('/api/batch_predict_async', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -477,7 +477,7 @@ const Upload = ({ onNavigate, onToast }) => {
 
       {batchPredictions.length > 0 && (
         <div style={styles.tableBox}>
-          <h2 style={styles.sectionTitle}>Prediction Results {viewingUploadId && `(ID: ${viewingUploadId})`}</h2>
+          <h2 style={styles.sectionTitle}>Prediction Results</h2>
           <div style={{ overflowX: "auto" }}>
             <table style={styles.table}>
               <thead>

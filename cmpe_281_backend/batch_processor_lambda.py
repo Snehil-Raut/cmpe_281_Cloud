@@ -63,6 +63,19 @@ def load_model(model_name):
         model_data = response['Body'].read()
         model = joblib.load(io.BytesIO(model_data))
 
+        # Compatibility shim: older sklearn (Lambda bundle) accesses self.multi_class
+        # during predict, but models trained with sklearn>=1.5 no longer store it.
+        try:
+            from sklearn.linear_model import LogisticRegression as _LR
+            from sklearn.pipeline import Pipeline as _Pipeline
+            estimator = model
+            if isinstance(model, _Pipeline):
+                estimator = model[-1]
+            if isinstance(estimator, _LR) and not hasattr(estimator, 'multi_class'):
+                estimator.multi_class = 'auto'
+        except Exception:
+            pass
+
         artifacts = {
             'model': model,
             'scaler': None,

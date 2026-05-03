@@ -10,17 +10,13 @@ import warnings
 import io
 import json
 from decimal import Decimal
+from boto3.dynamodb.conditions import Attr
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
-
-# AWS S3 Configuration
-s3 = boto3.client('s3')
-sqs = boto3.client('sqs')
-dynamodb = boto3.resource('dynamodb')
 
 MODELS_BUCKET = 'honey-pot-models1'
 DATA_BUCKET = 'honey-pot-data1'
@@ -31,6 +27,13 @@ PREDICTIONS_TABLE = 'attack-detection-predictions'
 
 # Model cache
 models = {}
+
+
+
+# AWS clients/resources
+s3 = boto3.client('s3')
+sqs = boto3.client('sqs')
+dynamodb = boto3.resource('dynamodb')
 
 # Expected column schema for raw KDD training data (with label + difficulty_level)
 RAW_COLUMNS_WITH_LABEL = [
@@ -60,10 +63,7 @@ def download_model_from_s3(model_name):
             # Load using joblib (more reliable for scikit-learn models)
             model_bytes = io.BytesIO(model_data)
             models[model_name] = joblib.load(model_bytes)
-            
-            print(f"Model {model_name} loaded successfully")
         except Exception as e:
-            print(f"Error loading model {model_name}: {e}")
             return None
     return models[model_name]
 
@@ -274,7 +274,11 @@ def list_models():
     """List available models"""
     try:
         response = s3.list_objects_v2(Bucket=MODELS_BUCKET)
-        models_list = [obj['Key'].replace('.pkl', '') for obj in response.get('Contents', [])]
+        models_list = [
+            obj['Key'].replace('.pkl', '')
+            for obj in response.get('Contents', [])
+            if obj['Key'].endswith('.pkl')
+        ]
         return jsonify({
             'models': models_list,
             'status': 'success'
@@ -367,15 +371,19 @@ def store_upload_history():
     """Store upload metadata to DynamoDB"""
     try:
         data = request.get_json()
-        upload_id = data.get('upload_id')
+        upload_id = data.get('upload_id') or data.get('uploadId')
         filename = data.get('filename')
         row_count = data.get('row_count')
         model_name = data.get('model_name', 'random_forest')
+
+        if not upload_id:
+            return jsonify({'error': 'upload_id is required'}), 400
         
         table = dynamodb.Table(UPLOAD_HISTORY_TABLE)
         
         table.put_item(
             Item={
+                'uploadId': upload_id,
                 'upload_id': upload_id,
                 'filename': filename,
                 'model': model_name,
@@ -402,6 +410,10 @@ def get_upload_history():
         # Scan with limit and sort by timestamp descending
         response = table.scan(Limit=50)
         items = response.get('Items', [])
+
+        for item in items:
+            if 'upload_id' not in item and 'uploadId' in item:
+                item['upload_id'] = item['uploadId']
         
         # Sort by timestamp descending
         items = sorted(items, key=lambda x: x.get('timestamp', ''), reverse=True)
@@ -415,22 +427,56 @@ def get_upload_history():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/delete_upload_history/<upload_id>', methods=['OPTIONS', 'DELETE'])
+def delete_upload_history(upload_id):
+    """Delete upload history row from DynamoDB by upload_id"""
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Methods', 'DELETE, OPTIONS')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        return response, 200
+
+    try:
+        table = dynamodb.Table(UPLOAD_HISTORY_TABLE)
+
+        table.delete_item(
+            Key={'uploadId': upload_id}
+        )
+
+        return jsonify({
+            'status': 'success',
+            'message': 'Upload history deleted',
+            'upload_id': upload_id
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/get_batch_predictions/<upload_id>', methods=['GET'])
 def get_batch_predictions(upload_id):
     """Fetch batch predictions by upload_id from DynamoDB"""
     try:
         table = dynamodb.Table(PREDICTIONS_TABLE)
-        
-        # Query all predictions for this upload_id
-        response = table.query(
-            KeyConditionExpression='upload_id = :upload_id',
-            ExpressionAttributeValues={
-                ':upload_id': upload_id
-            },
-            Limit=1000
-        )
-        
-        predictions = response.get('Items', [])
+
+        predictions = []
+        scan_kwargs = {
+            'FilterExpression': Attr('uploadId').eq(upload_id),
+            'Limit': 1000
+        }
+
+        while True:
+            response = table.scan(**scan_kwargs)
+            predictions.extend(response.get('Items', []))
+
+            if 'LastEvaluatedKey' not in response:
+                break
+
+            scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
+
+        for prediction in predictions:
+            if prediction.get('actual_label') in {'None', '', None}:
+                prediction['actual_label'] = None
         
         # Sort by row number
         predictions = sorted(predictions, key=lambda x: int(x.get('row_number', 0)))
@@ -446,19 +492,12 @@ def get_batch_predictions(upload_id):
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    print("Starting EC2 ML API Server...")
-    print("Models will be loaded on first request to save memory.")
-    
     # Run Flask app - try port 5000, fall back to 5001 if in use
     port = 5000
     import socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     result = sock.connect_ex(('127.0.0.1', port))
     sock.close()
-    
     if result == 0:
-        print(f"\nPort {port} is in use, using port 5001 instead")
         port = 5001
-    
-    print(f"Starting Flask app on http://localhost:{port}")
     app.run(host='0.0.0.0', port=port, debug=False)

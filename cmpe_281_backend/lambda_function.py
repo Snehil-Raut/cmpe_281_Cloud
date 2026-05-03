@@ -1,6 +1,5 @@
 import json
 import boto3
-import joblib
 from datetime import datetime
 from decimal import Decimal
 import io
@@ -16,10 +15,8 @@ PREDICTIONS_TABLE = os.environ.get("PREDICTIONS_TABLE", "attack-detection-predic
 
 MODEL_CACHE = {}
 
-def lambda_handler(event, context):
-    print("========== LAMBDA START ==========")
-    print("RAW EVENT:", json.dumps(event, default=str))
 
+def lambda_handler(event, context):
     try:
         # Parse body from API Gateway or direct invocation
         body = {}
@@ -46,9 +43,7 @@ def lambda_handler(event, context):
         if not isinstance(body, dict):
             body = {}
         
-        print("PARSED BODY:", json.dumps(body, default=str))
         operation = body.get("operation")
-        print(f"OPERATION: {operation} (type: {type(operation).__name__})")
 
         if operation == "get_metrics":
             model_name = body.get("model_name")
@@ -61,7 +56,37 @@ def lambda_handler(event, context):
                 "metrics": metrics
             })
 
-        elif operation == "store_predictions_batch":
+        elif operation in ["store_prediction", "store_predictions_batch"]:
+            if operation == "store_prediction":
+                required_fields = ["actual_label", "predicted_label", "confidence"]
+                for field in required_fields:
+                    if field not in body:
+                        return response(400, {
+                            "status": "error",
+                            "error": f"missing required field: {field}"
+                        })
+
+                prediction_id = body.get("prediction_id", f"pred_{datetime.utcnow().isoformat()}")
+                model_name = body.get("model_name", "unknown")
+
+                stored, skipped = store_predictions_to_db(
+                    predictions=[{
+                        "row": 0,
+                        "actual_label": body.get("actual_label"),
+                        "predicted_label": body.get("predicted_label"),
+                        "confidence": body.get("confidence", 0)
+                    }],
+                    model_name=model_name,
+                    upload_id=prediction_id
+                )
+
+                return response(200, {
+                    "status": "success",
+                    "message": "Prediction stored successfully",
+                    "stored": stored,
+                    "skipped": skipped
+                })
+
             predictions = body.get("predictions", [])
             model_name = body.get("model_name", "unknown")
             upload_id = body.get("uploadId", f"api_{datetime.utcnow().isoformat()}")
@@ -116,13 +141,11 @@ def lambda_handler(event, context):
         })
 
     except json.JSONDecodeError as e:
-        print("JSON parsing error:", str(e))
         return response(400, {
             "status": "error",
             "error": f"Invalid JSON: {str(e)}"
         })
     except Exception as e:
-        print("Lambda error:", str(e))
         traceback.print_exc()
         return response(500, {
             "status": "error",
@@ -143,9 +166,9 @@ def response(status_code, body):
     }
 
 def load_model(model_name):
-    if model_name not in MODEL_CACHE:
-        print(f"Loading model from S3: {model_name}.pkl")
+    import joblib
 
+    if model_name not in MODEL_CACHE:
         response = s3.get_object(
             Bucket=MODELS_BUCKET,
             Key=f"{model_name}.pkl"
@@ -153,8 +176,6 @@ def load_model(model_name):
 
         model_data = response["Body"].read()
         MODEL_CACHE[model_name] = joblib.load(io.BytesIO(model_data))
-
-        print(f"Model loaded successfully: {model_name}")
 
     return MODEL_CACHE[model_name]
 
@@ -190,8 +211,6 @@ def run_predictions(rows, model_obj):
     all_cols = list(rows[0].keys())
     feature_cols = [col for col in all_cols if col not in label_cols]
 
-    print("Feature columns:", feature_cols)
-
     for idx, row in enumerate(rows):
         try:
             features = [encode_value(row.get(col)) for col in feature_cols]
@@ -220,7 +239,6 @@ def run_predictions(rows, model_obj):
             })
 
         except Exception as e:
-            print(f"Error processing row {idx}:", str(e))
             continue
 
     return predictions
@@ -232,6 +250,9 @@ def normalize_actual_label(actual_label):
 
     label = str(actual_label).strip().lower()
 
+    if label in ["", "none", "null", "nan", "unknown", "n/a"]:
+        return None
+
     if label in ["attack", "1"]:
         return "Attack"
 
@@ -241,6 +262,38 @@ def normalize_actual_label(actual_label):
     if "attack" in label or "anom" in label:
         return "Attack"
 
+    # NSL-KDD style labels (e.g., neptune, smurf, ipsweep) are all attack classes.
+    return "Attack"
+
+
+def normalize_predicted_label(predicted_label):
+    if predicted_label is None:
+        return None
+
+    label = str(predicted_label).strip().lower()
+
+    if label in ["attack", "1"]:
+        return "Attack"
+
+    if label in ["normal", "0"]:
+        return "Normal"
+
+    return None
+
+
+def parse_is_correct(value):
+    if isinstance(value, bool):
+        return value
+
+    text = str(value).strip().lower()
+    if text in ["true", "correct", "1", "yes"]:
+        return True
+
+    if text in ["false", "incorrect", "0", "no"]:
+        return False
+
+    return None
+
     return None
 
 
@@ -249,9 +302,14 @@ def get_metrics_from_db(model_name=None, time_range="all"):
     try:
         table = dynamodb.Table(PREDICTIONS_TABLE)
         
-        # Scan all predictions (in production, use GSI with proper filtering)
+        # Scan all pages (DynamoDB scan returns up to 1MB per request)
+        predictions = []
         response = table.scan()
-        predictions = response.get('Items', [])
+        predictions.extend(response.get('Items', []))
+
+        while 'LastEvaluatedKey' in response:
+            response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
+            predictions.extend(response.get('Items', []))
         
         # Filter by model if specified
         if model_name:
@@ -282,24 +340,57 @@ def get_metrics_from_db(model_name=None, time_range="all"):
                 "total_attacks": 0,
                 "total_normal": 0
             }
+
+        normalized_predictions = []
+        for prediction in predictions:
+            normalized_actual = normalize_actual_label(prediction.get('actual_label'))
+            normalized_predicted = normalize_predicted_label(prediction.get('predicted_label'))
+
+            if not normalized_actual or not normalized_predicted:
+                continue
+
+            parsed = dict(prediction)
+            parsed['actual_label'] = normalized_actual
+            parsed['predicted_label'] = normalized_predicted
+            parsed['is_correct'] = parse_is_correct(prediction.get('is_correct'))
+
+            if parsed['is_correct'] is None:
+                parsed['is_correct'] = normalized_actual == normalized_predicted
+
+            normalized_predictions.append(parsed)
+
+        if not normalized_predictions:
+            return {
+                "total_predictions": 0,
+                "accuracy": 0,
+                "precision": 0,
+                "recall": 0,
+                "f1_score": 0,
+                "true_positives": 0,
+                "true_negatives": 0,
+                "false_positives": 0,
+                "false_negatives": 0,
+                "total_attacks": 0,
+                "total_normal": 0
+            }
         
         # Calculate metrics
-        total = len(predictions)
-        correct = sum(1 for p in predictions if p.get('is_correct', False))
+        total = len(normalized_predictions)
+        correct = sum(1 for p in normalized_predictions if p.get('is_correct') is True)
         
         # Confusion matrix
-        tp = sum(1 for p in predictions if p.get('predicted_label') == 'Attack' and p.get('actual_label') == 'Attack')
-        tn = sum(1 for p in predictions if p.get('predicted_label') == 'Normal' and p.get('actual_label') == 'Normal')
-        fp = sum(1 for p in predictions if p.get('predicted_label') == 'Attack' and p.get('actual_label') == 'Normal')
-        fn = sum(1 for p in predictions if p.get('predicted_label') == 'Normal' and p.get('actual_label') == 'Attack')
+        tp = sum(1 for p in normalized_predictions if p.get('predicted_label') == 'Attack' and p.get('actual_label') == 'Attack')
+        tn = sum(1 for p in normalized_predictions if p.get('predicted_label') == 'Normal' and p.get('actual_label') == 'Normal')
+        fp = sum(1 for p in normalized_predictions if p.get('predicted_label') == 'Attack' and p.get('actual_label') == 'Normal')
+        fn = sum(1 for p in normalized_predictions if p.get('predicted_label') == 'Normal' and p.get('actual_label') == 'Attack')
         
         accuracy = correct / total if total > 0 else 0
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0
         recall = tp / (tp + fn) if (tp + fn) > 0 else 0
         f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
         
-        total_attacks = sum(1 for p in predictions if p.get('actual_label') == 'Attack')
-        total_normal = sum(1 for p in predictions if p.get('actual_label') == 'Normal')
+        total_attacks = sum(1 for p in normalized_predictions if p.get('actual_label') == 'Attack')
+        total_normal = sum(1 for p in normalized_predictions if p.get('actual_label') == 'Normal')
         
         return {
             "total_predictions": total,
@@ -316,7 +407,6 @@ def get_metrics_from_db(model_name=None, time_range="all"):
         }
     
     except Exception as e:
-        print("Error calculating metrics:", str(e))
         traceback.print_exc()
         raise
 
@@ -364,10 +454,8 @@ def store_predictions_to_db(predictions, model_name, upload_id=""):
                 batch.put_item(Item=item)
                 stored_count += 1
 
-        print(f"Stored {stored_count} predictions, skipped {skipped_count}")
         return stored_count, skipped_count
 
     except Exception as e:
-        print("Error storing predictions:", str(e))
         traceback.print_exc()
         raise

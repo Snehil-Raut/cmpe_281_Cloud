@@ -1,13 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import Papa from 'papaparse';
 import styles from '../styles';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5001';
 
-const Upload = ({ onNavigate }) => {
+const Upload = ({ onNavigate, onToast }) => {
   const [uploadedFileName, setUploadedFileName] = useState("");
   const [csvData, setCsvData] = useState([]);
-  const [fullCsvData, setFullCsvData] = useState([]);
   const [csvContent, setCsvContent] = useState("");
   
   // Upload History state
@@ -19,51 +18,73 @@ const Upload = ({ onNavigate }) => {
   const [uploadStatus, setUploadStatus] = useState("");
   const [models, setModels] = useState(['random_forest', 'decision_tree', 'logistic_regression']);
   const [selectedModel, setSelectedModel] = useState('random_forest');
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [isLoadingPredictions, setIsLoadingPredictions] = useState(false);
+  const [deletingUploadId, setDeletingUploadId] = useState(null);
+
+  const loadModels = useCallback(async () => {
+    setIsLoadingModels(true);
+    try {
+      const response = await fetch(`${BACKEND_URL}/models`);
+      if (response.ok) {
+        const data = await response.json();
+        if (Array.isArray(data.models) && data.models.length > 0) {
+          setModels(data.models);
+          setSelectedModel(data.models[0]);
+        }
+      }
+    } catch (error) {
+      console.warn('Unable to load model list from backend, using defaults.');
+      if (onToast) {
+        onToast('Unable to load models from backend, using defaults.', 'warning');
+      }
+    } finally {
+      setIsLoadingModels(false);
+    }
+  }, [onToast]);
+
+  const loadUploadHistory = useCallback(async (showError = false) => {
+    setIsLoadingHistory(true);
+    try {
+      const response = await fetch(`${BACKEND_URL}/get_upload_history`);
+      if (!response.ok) {
+        throw new Error(`History request failed with status ${response.status}`);
+      }
+
+      const data = await response.json();
+      setUploadHistory(data.uploads || []);
+      if (showError && onToast) {
+        onToast('Upload history refreshed.', 'success');
+      }
+    } catch (error) {
+      console.warn('Unable to load upload history:', error);
+      if (showError) {
+        setUploadStatus(`Unable to load upload history: ${error.message}`);
+        if (onToast) {
+          onToast(`Unable to load upload history: ${error.message}`, 'error');
+        }
+      }
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, [onToast]);
   
   // Pagination for prediction results
   const [currentPage, setCurrentPage] = useState(1);
   const recordsPerPage = 15;
   
   useEffect(() => {
-    // Load models and upload history on component mount
-    const loadModels = async () => {
-      try {
-        const response = await fetch(`${BACKEND_URL}/models`);
-        if (response.ok) {
-          const data = await response.json();
-          if (Array.isArray(data.models) && data.models.length > 0) {
-            setModels(data.models);
-            setSelectedModel(data.models[0]);
-          }
-        }
-      } catch (error) {
-        console.warn('Unable to load model list from backend, using defaults.');
-      }
-    };
-    
-    const loadUploadHistory = async () => {
-      try {
-        const response = await fetch(`${BACKEND_URL}/get_upload_history`);
-        if (response.ok) {
-          const data = await response.json();
-          setUploadHistory(data.uploads || []);
-        }
-      } catch (error) {
-        console.warn('Unable to load upload history:', error);
-      }
-    };
-    
     loadModels();
     loadUploadHistory();
-    
-    // Refresh upload history every 5 seconds
-    const interval = setInterval(loadUploadHistory, 5000);
-    return () => clearInterval(interval);
-  }, []);
+  }, [loadModels, loadUploadHistory]);
 
   const handleBatchPredictAsync = async () => {
     if (!csvContent || !uploadedFileName) {
       setUploadStatus('Please upload a CSV file first.');
+      if (onToast) {
+        onToast('Please upload a CSV file first.', 'warning');
+      }
       return;
     }
 
@@ -111,16 +132,16 @@ const Upload = ({ onNavigate }) => {
 
       if (historyResponse.ok) {
         setUploadStatus(`File uploaded successfully! Upload ID: ${receivedUploadId}. Processing in background...`);
-        
-        // Refresh upload history
-        const historyFetch = await fetch(`${BACKEND_URL}/get_upload_history`);
-        if (historyFetch.ok) {
-          const historyData = await historyFetch.json();
-          setUploadHistory(historyData.uploads || []);
+        if (onToast) {
+          onToast('Batch upload queued successfully.', 'success');
         }
+        await loadUploadHistory(true);
       }
     } catch (error) {
       setUploadStatus(`Upload failed: ${error.message}`);
+      if (onToast) {
+        onToast(`Upload failed: ${error.message}`, 'error');
+      }
     } finally {
       setIsPredicting(false);
     }
@@ -128,6 +149,7 @@ const Upload = ({ onNavigate }) => {
 
   const handleViewPredictions = async (uploadId) => {
     try {
+      setIsLoadingPredictions(true);
       setViewingUploadId(uploadId);
       const response = await fetch(`${BACKEND_URL}/get_batch_predictions/${uploadId}`);
       
@@ -143,11 +165,59 @@ const Upload = ({ onNavigate }) => {
         }));
         setBatchPredictions(predictions);
         setCurrentPage(1);
+        if (onToast) {
+          onToast(`Loaded ${predictions.length} prediction rows.`, 'success');
+        }
       } else {
         setUploadStatus('Failed to load predictions');
+        if (onToast) {
+          onToast('Failed to load predictions.', 'error');
+        }
       }
     } catch (error) {
       setUploadStatus(`Error loading predictions: ${error.message}`);
+      if (onToast) {
+        onToast(`Error loading predictions: ${error.message}`, 'error');
+      }
+    } finally {
+      setIsLoadingPredictions(false);
+    }
+  };
+
+  const handleDeleteUpload = async (uploadId) => {
+    const confirmed = window.confirm('Delete this upload history entry?');
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setDeletingUploadId(uploadId);
+      const response = await fetch(`${BACKEND_URL}/delete_upload_history/${encodeURIComponent(uploadId)}`, {
+        method: 'DELETE'
+      });
+
+      if (!response.ok) {
+        throw new Error(`Delete failed with status ${response.status}`);
+      }
+
+      setUploadHistory((prev) => prev.filter((item) => item.upload_id !== uploadId));
+
+      if (viewingUploadId === uploadId) {
+        setViewingUploadId(null);
+        setBatchPredictions([]);
+      }
+
+      setUploadStatus('Upload history entry deleted.');
+      if (onToast) {
+        onToast('Upload history entry deleted.', 'success');
+      }
+    } catch (error) {
+      setUploadStatus(`Delete failed: ${error.message}`);
+      if (onToast) {
+        onToast(`Delete failed: ${error.message}`, 'error');
+      }
+    } finally {
+      setDeletingUploadId(null);
     }
   };
 
@@ -161,135 +231,8 @@ const Upload = ({ onNavigate }) => {
     }
   };
 
-  const storePredictionsToDb = async (predictions, rawResults = null) => {
-    // Store predictions to DynamoDB in a single batch call for efficiency
-    try {
-      const predictionsToStore = [];
-      
-      for (let idx = 0; idx < predictions.length; idx++) {
-        const prediction = predictions[idx];
-        const rawResult = rawResults ? rawResults[idx] : null;
-        let actualLabel = null;
-        
-        // Try to get actual_label from backend result first
-        if (rawResult && rawResult.actual_label) {
-          actualLabel = rawResult.actual_label;
-        }
-        
-        // Fall back to looking in CSV features
-        if (!actualLabel) {
-          const features = prediction.features || {};
-          const labelColumns = ['label', 'actual_label', 'actual', 'true_label', 'target'];
-          for (const col of labelColumns) {
-            if (features[col] !== undefined) {
-              actualLabel = features[col];
-              break;
-            }
-          }
-        }
-        
-        // Only include if we have an actual label for proper metrics tracking
-        if (actualLabel) {
-          predictionsToStore.push({
-            prediction_id: `batch_pred_${Date.now()}_${Math.random()}`,
-            model_name: selectedModel,
-            actual_label: String(actualLabel),
-            predicted_label: prediction.prediction,
-            confidence: parseFloat(prediction.confidence) || 0
-          });
-        }
-      }
-      
-      if (predictionsToStore.length > 0) {
-        console.log(`Stored ${predictionsToStore.length} predictions via Lambda`);
-      } else {
-        console.log('No labeled predictions to store');
-      }
-    } catch (error) {
-      console.error('Failed to store predictions:', error);
-    }
-  };
-
-  const handleBatchPredict = async () => {
-    setIsPredicting(true);
-    try {
-      if (!csvContent) {
-        throw new Error('No CSV content available for prediction. Please upload a file first.');
-      }
-
-      const response = await fetch(`${BACKEND_URL}/batch_predict`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          csv_data: csvContent,
-          model: selectedModel
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      if (data.status === 'success' && data.results) {
-        const predictions = data.results.map((result) => ({
-          index: result.row + 1,
-          prediction: result.prediction,
-          confidence: (result.confidence * 100).toFixed(1),
-          features: fullCsvData[result.row] || {}
-        }));
-        setBatchPredictions(predictions);
-        setUploadStatus('Prediction completed.');
-        
-        // Store predictions to DynamoDB for metrics - pass raw results too
-        await storePredictionsToDb(predictions, data.results);
-      } else {
-        throw new Error(data.error || 'Unknown error from API');
-      }
-    } catch (error) {
-      setUploadStatus(`Prediction failed: ${error.message}`);
-    } finally {
-      setIsPredicting(false);
-    }
-  };
-
-  const handleUploadToS3 = async () => {
-    if (!csvContent || !uploadedFileName) {
-      setUploadStatus('Please upload a CSV file first.');
-      return;
-    }
-
-    setUploadStatus('Uploading...');
-    try {
-      const response = await fetch(`${BACKEND_URL}/upload_csv`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          csv_data: csvContent,
-          filename: uploadedFileName,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `Upload failed with status ${response.status}`);
-      }
-
-      const data = await response.json();
-      setUploadStatus(`Upload successful: ${data.filename}`);
-    } catch (error) {
-      setUploadStatus(`Upload failed: ${error.message}`);
-    }
-  };
-
   const handleClearFile = () => {
     setCsvData([]);
-    setFullCsvData([]);
     setCsvContent("");
     setUploadedFileName("");
     setUploadStatus("");
@@ -311,11 +254,12 @@ const Upload = ({ onNavigate }) => {
         header: true,
         skipEmptyLines: true,
         complete: function (results) {
-          setFullCsvData(results.data);
           setCsvData(results.data.slice(0, 5));
         },
         error: function (error) {
-          alert('Error parsing CSV file. Please check the file format.');
+          if (onToast) {
+            onToast('Error parsing CSV file. Please check the file format.', 'error');
+          }
         }
       });
     };
@@ -386,6 +330,9 @@ const Upload = ({ onNavigate }) => {
             </option>
           ))}
         </select>
+        {isLoadingModels && (
+          <div style={styles.infoBox}>Loading available models...</div>
+        )}
 
         <div style={{...styles.buttonContainer, marginTop: '16px', gap: '12px', display: 'flex', flexWrap: 'wrap'}}>
           <button style={styles.secondaryButton} onClick={() => onNavigate("dashboard")}>Back to Dashboard</button>
@@ -397,13 +344,6 @@ const Upload = ({ onNavigate }) => {
                 disabled={isPredicting || !csvContent}
               >
                 {isPredicting ? "Processing..." : "Run Predictions (Async)"}
-              </button>
-              <button
-                style={styles.secondaryButton}
-                onClick={handleUploadToS3}
-                disabled={!csvContent}
-              >
-                Upload CSV to S3
               </button>
             </>
           )}
@@ -441,9 +381,27 @@ const Upload = ({ onNavigate }) => {
         </div>
       )}
 
-      {uploadHistory.length > 0 && (
-        <div style={styles.tableBox}>
-          <h2 style={styles.sectionTitle}>Upload History</h2>
+      <div style={styles.tableBox}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+          <h2 style={{ ...styles.sectionTitle, marginBottom: 0 }}>Upload History</h2>
+          <button
+            onClick={() => loadUploadHistory(true)}
+            disabled={isLoadingHistory}
+            style={{
+              backgroundColor: '#1f4e79',
+              color: 'white',
+              border: 'none',
+              padding: '8px 12px',
+              borderRadius: '4px',
+              cursor: isLoadingHistory ? 'not-allowed' : 'pointer',
+              fontSize: '13px'
+            }}
+          >
+            {isLoadingHistory ? 'Refreshing...' : 'Refresh History'}
+          </button>
+        </div>
+        {isLoadingHistory && <div style={styles.infoBox}>Loading upload history...</div>}
+        {uploadHistory.length > 0 ? (
           <div style={{ overflowX: "auto" }}>
             <table style={styles.table}>
               <thead>
@@ -469,33 +427,53 @@ const Upload = ({ onNavigate }) => {
                       </span>
                     </td>
                     <td style={styles.td}>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                       {upload.status === 'complete' && (
                         <button
                           onClick={() => handleViewPredictions(upload.upload_id)}
+                          disabled={isLoadingPredictions}
                           style={{
                             backgroundColor: '#2196F3',
                             color: 'white',
                             border: 'none',
                             padding: '6px 10px',
                             borderRadius: '4px',
-                            cursor: 'pointer',
+                            cursor: isLoadingPredictions ? 'not-allowed' : 'pointer',
                             fontSize: '12px'
                           }}
                         >
-                          View Predictions →
+                          {isLoadingPredictions && viewingUploadId === upload.upload_id ? 'Loading...' : 'View Predictions →'}
                         </button>
                       )}
                       {upload.status === 'processing' && (
                         <span style={{ color: '#FFA500', fontSize: '12px' }}>⏳ Processing...</span>
                       )}
+                      <button
+                        onClick={() => handleDeleteUpload(upload.upload_id)}
+                        disabled={deletingUploadId === upload.upload_id}
+                        style={{
+                          backgroundColor: '#d64545',
+                          color: 'white',
+                          border: 'none',
+                          padding: '6px 10px',
+                          borderRadius: '4px',
+                          cursor: deletingUploadId === upload.upload_id ? 'not-allowed' : 'pointer',
+                          fontSize: '12px'
+                        }}
+                      >
+                        {deletingUploadId === upload.upload_id ? 'Deleting...' : 'Delete'}
+                      </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </div>
-      )}
+        ) : (
+          <p style={{ margin: 0, color: '#5f6b7a' }}>No upload history available yet.</p>
+        )}
+      </div>
 
       {batchPredictions.length > 0 && (
         <div style={styles.tableBox}>

@@ -4,8 +4,9 @@ import styles from '../styles';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5001';
 const LAMBDA_ENDPOINT = 'https://yof26i9009.execute-api.us-east-1.amazonaws.com/dev/predict';
 
-const Predict = ({ onNavigate }) => {
+const Predict = ({ onNavigate, onToast }) => {
   const [models, setModels] = useState(['random_forest', 'decision_tree', 'logistic_regression']);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [formData, setFormData] = useState({
     duration: "",
     protocol_type: "tcp",
@@ -29,6 +30,7 @@ const Predict = ({ onNavigate }) => {
 
   useEffect(() => {
     const loadModels = async () => {
+      setIsLoadingModels(true);
       try {
         const response = await fetch(`${BACKEND_URL}/models`);
         if (response.ok) {
@@ -40,10 +42,15 @@ const Predict = ({ onNavigate }) => {
         }
       } catch (error) {
         console.warn('Unable to load model list from backend, using defaults.');
+        if (onToast) {
+          onToast('Unable to load models from backend, using defaults.', 'warning');
+        }
+      } finally {
+        setIsLoadingModels(false);
       }
     };
     loadModels();
-  }, []);
+  }, [onToast]);
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -97,7 +104,9 @@ const Predict = ({ onNavigate }) => {
     const emptyFields = requiredFields.filter(field => !formData[field] || formData[field].trim() === '');
 
     if (emptyFields.length > 0) {
-      alert('Please fill all the fields');
+      if (onToast) {
+        onToast('Please fill all required fields before prediction.', 'warning');
+      }
       return;
     }
 
@@ -128,6 +137,9 @@ const Predict = ({ onNavigate }) => {
     });
     
     setStoreMessage(null);
+    if (onToast) {
+      onToast(`Prediction completed: ${riskLevel} risk`, 'info');
+    }
   };
 
   // Store prediction to Lambda with confirmed actual label
@@ -142,7 +154,7 @@ const Predict = ({ onNavigate }) => {
         body: JSON.stringify({
           operation: 'store_prediction',
           prediction_id: `pred_${Date.now()}`,
-          model_name: result.model.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+          model_name: result.model,
           actual_label: actualLabel,
           predicted_label: result.prediction,
           confidence: (result.score / 100).toFixed(4)
@@ -157,17 +169,26 @@ const Predict = ({ onNavigate }) => {
           text: `✓ Prediction stored! Actual: ${actualLabel}, Predicted: ${result.prediction}`
         });
         setResult({ ...result, confirmed: true, actualLabel });
+        if (onToast) {
+          onToast('Prediction stored successfully.', 'success');
+        }
       } else {
         setStoreMessage({
           type: 'error',
           text: `Failed to store: ${resData.error || 'Unknown error'}`
         });
+        if (onToast) {
+          onToast(`Failed to store prediction: ${resData.error || 'Unknown error'}`, 'error');
+        }
       }
     } catch (error) {
       setStoreMessage({
         type: 'error',
         text: `Error storing prediction: ${error.message}`
       });
+      if (onToast) {
+        onToast(`Error storing prediction: ${error.message}`, 'error');
+      }
     }
     setStoring(false);
   };
@@ -198,6 +219,9 @@ const Predict = ({ onNavigate }) => {
             </option>
           ))}
         </select>
+        {isLoadingModels && (
+          <div style={styles.infoBox}>Loading available models...</div>
+        )}
 
         <label style={styles.label}>Duration</label>
         <input name="duration" value={formData.duration} onChange={handleChange} style={styles.input} />

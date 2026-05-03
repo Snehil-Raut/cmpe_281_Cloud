@@ -474,6 +474,15 @@ const styles = {
     border: "1px solid #334155",
     color: "#cbd5e1"
   },
+  infoBox: {
+    marginTop: "14px",
+    padding: "12px",
+    borderRadius: "10px",
+    backgroundColor: "rgba(14, 165, 233, 0.12)",
+    border: "1px solid rgba(56, 189, 248, 0.5)",
+    color: "#bae6fd",
+    fontSize: "13px"
+  },
   tableBox: {
     backgroundColor: "rgba(15, 23, 42, 0.9)",
     border: "1px solid #334155",
@@ -502,6 +511,56 @@ const styles = {
     textAlign: "left",
     backgroundColor: "#0f172a",
     color: "#e2e8f0"
+  },
+  toastContainer: {
+    position: "fixed",
+    top: "18px",
+    right: "18px",
+    zIndex: 9999,
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+    maxWidth: "420px",
+    width: "calc(100% - 36px)"
+  },
+  toast: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "10px",
+    padding: "12px 14px",
+    borderRadius: "10px",
+    border: "1px solid",
+    boxShadow: "0 10px 25px rgba(0,0,0,0.28)",
+    fontSize: "14px"
+  },
+  toastInfo: {
+    backgroundColor: "#0b3b5a",
+    borderColor: "#38bdf8",
+    color: "#e0f2fe"
+  },
+  toastSuccess: {
+    backgroundColor: "#12482f",
+    borderColor: "#34d399",
+    color: "#d1fae5"
+  },
+  toastWarning: {
+    backgroundColor: "#5c3a0f",
+    borderColor: "#f59e0b",
+    color: "#fef3c7"
+  },
+  toastError: {
+    backgroundColor: "#5e1e26",
+    borderColor: "#f87171",
+    color: "#fee2e2"
+  },
+  toastCloseButton: {
+    background: "transparent",
+    border: "none",
+    color: "inherit",
+    fontSize: "16px",
+    cursor: "pointer",
+    lineHeight: 1
   }
 };
 

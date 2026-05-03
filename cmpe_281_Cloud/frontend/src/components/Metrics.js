@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -29,7 +29,7 @@ ChartJS.register(
 const LAMBDA_ENDPOINT = 'https://yof26i9009.execute-api.us-east-1.amazonaws.com/dev/predict';
 
 
-const Metrics = ({ onNavigate }) => {
+const Metrics = ({ onNavigate, onToast }) => {
   const [confusionMatrix, setConfusionMatrix] = useState(null);
   const [metricsData, setMetricsData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -101,7 +101,7 @@ const Metrics = ({ onNavigate }) => {
     });
   };
 
-  const fetchAllData = async () => {
+  const fetchAllData = useCallback(async (notify = false) => {
     setLoading(true);
     setError(null);
 
@@ -113,7 +113,7 @@ const Metrics = ({ onNavigate }) => {
       });
 
       const data = await parseLambdaBody(response);
-      console.log('Metrics raw response:', data);
+
 
       const metricsPayload = data?.metrics ?? data ?? {};
 
@@ -152,19 +152,25 @@ const Metrics = ({ onNavigate }) => {
         avg_confidence: toNumber(metricsPayload.avg_confidence, 0.95),
         attack_percentage: computedAttackPercentage,
       });
+      if (notify && onToast) {
+        onToast('Metrics refreshed successfully.', 'success');
+      }
     } catch (err) {
       console.error('Failed to fetch metrics data:', err);
       setError(`Failed to fetch data: ${err.message}`);
       setSampleConfusionMatrix();
       setSampleMetrics();
+      if (onToast) {
+        onToast(`Failed to fetch metrics: ${err.message}`, 'error');
+      }
     } finally {
       setLoading(false);
     }
-  };
+  }, [onToast]);
 
   useEffect(() => {
     fetchAllData();
-  }, []);
+  }, [fetchAllData]);
 
   const safeNormalPredictions = toNumber(metricsData?.normal_predictions, 0);
   const safeAttacksDetected = toNumber(metricsData?.attacks_detected, 0);
@@ -327,6 +333,16 @@ const Metrics = ({ onNavigate }) => {
         Real-time visualization of model performance and prediction analytics
       </p>
 
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '14px' }}>
+        <button
+          style={styles.secondaryButton}
+          onClick={() => fetchAllData(true)}
+          disabled={loading}
+        >
+          {loading ? 'Refreshing Metrics...' : 'Refresh Metrics'}
+        </button>
+      </div>
+
       {error && (
         <div
           style={{
@@ -352,7 +368,7 @@ const Metrics = ({ onNavigate }) => {
             marginBottom: '20px',
           }}
         >
-          Loading metrics...
+          Loading metrics from backend...
         </div>
       )}
 
